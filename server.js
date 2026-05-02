@@ -1,79 +1,53 @@
-const express = require("express");
-
-const cors = require("cors");
-
-const app = new express();
-
-const User = require("./User");
-
-const bcrypt = require("bcrypt");
-
+const http = require("http");
+const app = require("./src/app");
 const jwt = require("jsonwebtoken");
+const Message = require("./src/models/Message.js");
 
-const connectDB = require("./db");
-const { connect } = require("mongoose");
-const authMiddleware = require("./middleware");
+const server = http.createServer(app);
 
-require("dotenv").config();
+const io = require("socket.io")(server, {
+    cors: {
+        origin: "http://localhost:3000",
+        methods: ["GET", "POST"]
+    }
+});
 
-connectDB();
-app.use(cors());
+// middleware socket
+io.use((socket, next) => {
+    const token = socket.handshake.auth.token;
 
-app.use(express.json());
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        socket.user = decoded;
+        next();
+    } catch {
+        next(new Error("Invalid token"));
+    }
+});
 
+io.on("connection", (socket) => {
+    console.log("User connected:", socket.user.email);
 
-app.post("/register", async (req,res) =>{
-    const {name, email, password} = req.body;
+    socket.join(socket.user.email);
 
-    const hashedBcrypt = await bcrypt.hash(password, 5);
+    socket.on("sendMessage", async (data) => {
+        const senderEmail = socket.user.email;
+        const { receiverEmail, content } = data;
 
-    console.log("hashedBcrypt");
-    const user = new User({
-        name : name,
-        email : email,
-        password : hashedBcrypt
+        const message = new Message({
+            senderEmail,
+            receiverEmail,
+            content,
+            createdAt: new Date()
+        });
+
+        await message.save();
+
+        io.to(receiverEmail).emit("receiveMessage", message);
+        socket.emit("receiveMessage", message);
     });
+});
 
-    console.log("thông tin",user);
-
-    await user.save();
-
-    res.json("Đăng ký thành công")
-})
-
-app.post("/login", async (req,res) =>{
-    const {email, password} = req.body;
-
-    const user = await User.findOne({"email" : email});
-
-    if (!user) res.json("Không tìm thấy user");
-
-    const hashPassword = await bcrypt.compare(password, user.password) ;
-
-    if (!hashPassword) res.json("Sai mật khẩu");
-
-    const token = jwt.sign({
-        email: email,
-        password: password
-    },
-    process.env.JWT_SECRET,
-    {expiresIn:"1h"}
-    );
-
-    res.json(token);
-})
-
-app.get("/users", authMiddleware, async(req,res) =>{
-    const users = await  User.find({
-        email : { $ne : req.user.email}
-    });
-
-    console.log(users);
-
-    res.json(users);
-} )
-
-
-app.listen(3001, () =>{
-    console.log("Port đang chạy");
-})
+server.listen(3001, () => {
+    console.log("Server running on port 3001");
+});
