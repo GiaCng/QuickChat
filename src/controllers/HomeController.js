@@ -82,6 +82,8 @@ class HomeController {
 
         res.json(message);
     }
+
+ 
 }
 
 module.exports = new HomeController();
